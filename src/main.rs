@@ -2,10 +2,15 @@ use leptos::*;
 use leptos_dom::logging::console_log;
 
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::js_sys::*;
 
-#[wasm_bindgen(module = "https://cdn.jsdelivr.net/npm/chain-registry@1.63.15/+esm")]
+#[wasm_bindgen(module = "/test.js")]
+extern "C" {
+    #[wasm_bindgen]
+    fn hello();
+}
+
+// #[wasm_bindgen(module = "https://cdn.jsdelivr.net/npm/chain-registry@1.63.15/+esm")]
+#[wasm_bindgen(module = "/bundle.js")]
 extern "C" {
     #[derive(Clone)]
     type Chain;
@@ -29,6 +34,60 @@ extern "C" {
     static WALLETS: Vec<Wallet>;
 }
 
+#[derive(Clone)]
+#[wasm_bindgen]
+pub struct Coin {
+    #[wasm_bindgen(getter_with_clone)]
+    pub denom: String,
+
+    #[wasm_bindgen(getter_with_clone)]
+    pub amount: String,
+}
+
+#[wasm_bindgen]
+pub struct StdFee {
+    #[wasm_bindgen(getter_with_clone)]
+    pub amount: Vec<Coin>,
+
+    #[wasm_bindgen(getter_with_clone)]
+    pub gas: String,
+}
+
+#[wasm_bindgen(module = "https://cdn.jsdelivr.net/npm/@cosmjs/stargate@0.32.4/+esm")]
+extern "C" {
+
+    type SigningStargateClient;
+
+    #[wasm_bindgen(method)]
+    async fn getChainId(this: &SigningStargateClient) -> JsValue; // -> String
+
+    #[wasm_bindgen(method)]
+    async fn sendTokens(
+        this: &SigningStargateClient,
+        senderAddress: &str,
+        recipientAddress: &str,
+        amount: Vec<Coin>,
+        fee: StdFee,
+    ) -> JsValue;
+
+    #[wasm_bindgen(static_method_of = SigningStargateClient)]
+    async fn connectWithSigner(endpoint: &str, signer: OfflineSigner) -> JsValue; // SigningStargateClient
+}
+
+impl SigningStargateClient {
+    async fn get_chain_id(&self) -> String {
+        let js_value = self.getChainId().await;
+
+        js_value.as_string().unwrap()
+    }
+
+    async fn connect_with_signer(endpoint: &str, signer: OfflineSigner) -> SigningStargateClient {
+        let js_value = SigningStargateClient::connectWithSigner(endpoint, signer).await;
+
+        js_value.into()
+    }
+}
+
 #[wasm_bindgen(module = "https://cdn.jsdelivr.net/npm/@cosmos-kit/core@2.13.1/+esm")]
 extern "C" {
 
@@ -37,22 +96,20 @@ extern "C" {
     #[wasm_bindgen(constructor)]
     fn new() -> Logger;
 
-    type SigningStargateClient;
-
-    #[wasm_bindgen(method)]
-    async fn getChainId(this: &SigningStargateClient) -> JsValue; // -> String
-
-    // #[wasm_bindgen(method)]
-    // async fn sendTokens(
-    //     this: &SigningStargateClient,
-    //     senderAddress: &str,
-    //     recipientAddress: &str,
-    // ) -> JsValue;
+    type OfflineSigner;
 
     type ChainWalletBase;
 
+    // TODO: this should be protected somehow, to only be used through another type safe method
     #[wasm_bindgen(method)]
     async fn getSigningStargateClient(this: &ChainWalletBase) -> JsValue; // -> SigningStargateClient
+
+    #[wasm_bindgen(method)]
+    async fn initOfflineSigner(this: &ChainWalletBase);
+
+    // TODO: this should be protected somehow, to only be used through another type safe method
+    #[wasm_bindgen(method, getter)]
+    fn offlineSigner(this: &ChainWalletBase) -> JsValue; // -> OfflineSigner
 
     type WalletRepo;
 
@@ -79,40 +136,76 @@ extern "C" {
     fn getWalletRepo(this: &WalletManager, chainName: &str) -> WalletRepo;
 }
 
+impl ChainWalletBase {
+    async fn get_signing_stargate_client(&self) -> SigningStargateClient {
+        let js_value = self.getSigningStargateClient().await;
+
+        // TODO: assert this at runtime
+        // if js_value.is_instance_of::<SigningStargateClient>() {
+        //     panic!();
+        // }
+
+        js_value.into()
+    }
+}
+
 #[component]
 fn App() -> impl IntoView {
-    leptos::spawn_local(async {
-        let logger = Logger::new();
+    hello();
 
-        let wallet_manager = WalletManager::new(
-            CHAINS.to_vec(),
-            WALLETS.to_vec(),
-            logger,
-            false,
-            None,
-            None,
-            ASSETS.to_vec(),
-        );
+    view! {
+        <button
+            on:click=move |_| {
+                leptos::spawn_local(async {
+                    let logger = Logger::new();
 
-        let walletRepo: WalletRepo = wallet_manager.getWalletRepo("cosmoshubtestnet");
-        walletRepo.connect("keplr-extension").await;
+                    let wallet_manager = WalletManager::new(
+                        CHAINS.to_vec(),
+                        WALLETS.to_vec(),
+                        logger,
+                        false,
+                        None,
+                        None,
+                        ASSETS.to_vec(),
+                    );
 
-        let client = walletRepo.current().getSigningStargateClient().await;
+                    let walletRepo: WalletRepo = wallet_manager.getWalletRepo("cosmoshubtestnet");
+                    walletRepo.connect("keplr-extension").await;
 
-        let get_chain_id = Reflect::get(&client, &JsValue::from("getChainId")).unwrap();
+                    walletRepo.current().initOfflineSigner().await;
 
-        let result = Function::from(get_chain_id).call0(&client).unwrap();
+                    let offline_signer: OfflineSigner = walletRepo.current().offlineSigner().into();
 
-        let cb = Closure::new(|chainId: JsValue| {
-            console_log(&chainId.as_string().unwrap());
-        });
+                    let client: SigningStargateClient = SigningStargateClient::connect_with_signer("wss://rpc.sentry-01.theta-testnet.polypore.xyz", offline_signer).await;
 
-        let js_promise = Promise::from(result).then(&cb);
+                    // let client = walletRepo.current().get_signing_stargate_client().await;
 
-        JsFuture::from(js_promise).await.unwrap();
-    });
+                    // console_log(client.get_chain_id().await.as_str());
 
-    view! {}
+                    let _result = client
+                            .sendTokens(
+                                "cosmos1qkgwhmya6ftv4y99xac3ldxh8jd9a49xyyf4ff",
+                                "cosmos15aptdqmm7ddgtcrjvc5hs988rlrkze40l4q0he",
+                                vec![Coin {
+                                   denom: "uatom".to_owned(),
+                                   amount: "1".to_owned(),
+                                }],
+                                StdFee {
+                                   amount: vec![Coin {
+                                       denom: "uatom".to_owned(),
+                                       amount: "500".to_owned(),
+                                    }],
+                                   gas: "100000".to_owned(),
+                                },
+                            )
+                            .await;
+
+                });
+            }
+        >
+            RUN
+        </button>
+    }
 }
 
 fn main() {
