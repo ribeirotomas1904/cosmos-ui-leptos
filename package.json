@@ -1,19 +1,23 @@
 {
   "name": "cosmos-ui-leptos",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "lib.js",
   "scripts": {
-    "build": "esbuild ./lib.js --outfile=./bundle.js --bundle --format=cjs"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "./build.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
+  "devDependencies": {
+    "esbuild": "^0.23.0"
+  },
   "dependencies": {
-    "@rollup/plugin-commonjs": "^26.0.1",
-    "@rollup/plugin-node-resolve": "^15.2.3",
-    "chain-registry": "^1.63.16",
-    "esbuild": "^0.23.0",
-    "rollup-plugin-terser": "^7.0.2"
+    "@cosmjs/stargate": "^0.32.4",
+    "@cosmos-kit/core": "^2.13.1",
+    "@cosmos-kit/keplr-extension": "^2.12.2",
+    "chain-registry": "^1.63.17",
+    "esbuild-plugin-polyfill-node": "^0.3.0"
   }
 }
